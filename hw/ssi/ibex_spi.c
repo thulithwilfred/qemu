@@ -98,6 +98,8 @@ static void ibex_spi_transfer(IbexSPIState *s)
              rx, fifo8_num_used(&s->rx_fifo),
              s->regs[IBEX_SPI_STATUS]);
 
+    //TODO RM:
+    printf("QEMU: SPI TRANSFER\n");
     ibex_spi_irq(s);
 }
 
@@ -107,12 +109,13 @@ static uint64_t ibex_spi_read(void *opaque, hwaddr addr,
 {
     IbexSPIState *s = opaque;
     uint64_t rc = 0;
-
+    //TODO RM:
+    printf("QEMU: SPI REG READ\n");
     if (s == NULL) {
          qemu_log_mask(LOG_GUEST_ERROR,
                         "Null device state");
     }
-
+    
     /* Match reg index */
     addr = addr >> 2;
 
@@ -144,7 +147,8 @@ static void ibex_spi_write(void *opaque, hwaddr addr,
 {
     IbexSPIState *s = opaque;
     uint32_t value = val64;
-
+    //TODO RM:
+    printf("QEMU: SPI REG WRITE\n");
     DB_PRINT("Address: 0x%" HWADDR_PRIx ", Value: 0x%x\n", addr, value);
 
     if (s == NULL) {
@@ -202,6 +206,8 @@ static void ibex_spi_realize(DeviceState *dev, Error **errp)
 {
     IbexSPIState *s = IBEX_SPI(dev);
     int i;
+    //TODO RM:
+    printf("QEMU: SPI REALIZE\n");
 
     s->ssi = ssi_create_bus(dev, "ssi");
 
@@ -218,6 +224,8 @@ static void ibex_spi_realize(DeviceState *dev, Error **errp)
 static void ibex_spi_init(Object *obj)
 {
     IbexSPIState *s = IBEX_SPI(obj);
+    //TODO RM:
+    printf("QEMU: SPI INIT\n");
 
     memory_region_init_io(&s->mmio, obj, &ibex_spi_ops, s,
                           TYPE_IBEX_SPI, 0x1000);
@@ -235,7 +243,6 @@ static void ibex_spi_class_init(ObjectClass *klass, void *data)
     dc->reset = ibex_spi_reset;
     dc->vmsd = &vmstate_ibex;
     device_class_set_props(dc, ibex_spi_properties);
-    //dc->props = ibex_spi_properties;
 }
 
 static const TypeInfo ibex_spi_info = {
