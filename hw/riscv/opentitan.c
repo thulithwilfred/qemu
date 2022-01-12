@@ -118,6 +118,8 @@ static void lowrisc_ibex_soc_init(Object *obj)
     object_initialize_child(obj, "uart", &s->uart, TYPE_IBEX_UART);
 
     object_initialize_child(obj, "timer", &s->timer, TYPE_IBEX_TIMER);
+
+    object_initialize_child(obj, "spi", &s->spi, TYPE_IBEX_SPI);
 }
 
 static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
@@ -206,6 +208,9 @@ static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
     qdev_connect_gpio_out(DEVICE(&s->timer), 0,
                           qdev_get_gpio_in(DEVICE(qemu_get_cpu(0)),
                                            IRQ_M_TIMER));
+
+    /* SPI */
+    //TODO SPI: Connect SPI
 
     create_unimplemented_device("riscv.lowrisc.ibex.gpio",
         memmap[IBEX_DEV_GPIO].base, memmap[IBEX_DEV_GPIO].size);
