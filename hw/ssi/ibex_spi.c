@@ -79,7 +79,8 @@ static void ibex_spi_reset(DeviceState *dev)
 
 static void ibex_spi_irq(IbexSPIState *s)
 {
-
+    //TODO SPI: Complete IRQ
+    DB_PRINT("IRQ: Triggered\n");
 }
 
 
@@ -96,7 +97,7 @@ static void ibex_spi_transfer(IbexSPIState *s)
     DB_PRINT("Data received: 0x%x - rx pos: %d/%d\n",
              rx, fifo8_num_used(&s->rx_fifo),
              s->regs[IBEX_SPI_STATUS]);
-             
+
     ibex_spi_irq(s);
 }
 
@@ -116,6 +117,7 @@ static uint64_t ibex_spi_read(void *opaque, hwaddr addr,
     addr = addr >> 2;
 
     switch (addr) {
+    /* Skipping any W/O registers */
     case IBEX_SPI_INTR_STATE...IBEX_SPI_INTR_ENABLE:
     case IBEX_SPI_CONTROL...IBEX_SPI_CSID:
     case IBEX_SPI_TXDATA:
@@ -154,6 +156,7 @@ static void ibex_spi_write(void *opaque, hwaddr addr,
     addr = addr >> 2;
 
     switch (addr) {
+        /* Skipping any R/O registers */
         case IBEX_SPI_INTR_STATE...IBEX_SPI_CONTROL:
         case IBEX_SPI_CONFIGOPTS...IBEX_SPI_COMMAND:
             s->regs[addr] = value;
@@ -172,11 +175,11 @@ static void ibex_spi_write(void *opaque, hwaddr addr,
     ibex_spi_irq(s);
 }
 
-//!!!!!!!!!!!!//
+//-//
 static const MemoryRegionOps ibex_spi_ops = {
     .read = ibex_spi_read,
     .write = ibex_spi_write,
-    //!! CHECK
+    //TODO SPI: Verify This
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
@@ -185,6 +188,32 @@ static Property ibex_spi_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
+static const VMStateDescription vmstate_ibex = {
+    .name = TYPE_IBEX_SPI,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        /* DO */
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static void ibex_spi_realize(DeviceState *dev, Error **errp)
+{
+    IbexSPIState *s = IBEX_SPI(dev);
+    int i;
+
+    s->ssi = ssi_create_bus(dev, "ssi");
+
+    s->cs_lines = g_new0(qemu_irq, s->cs_width);
+
+    for (i = 0; i < s->cs_width; ++i) {
+        sysbus_init_irq(SYS_BUS_DEVICE(dev), &s->cs_lines[i]);
+    }
+
+    fifo8_create(&s->tx_fifo, 64);
+    fifo8_create(&s->rx_fifo, 64);
+}
 
 static void ibex_spi_init(Object *obj)
 {
@@ -200,10 +229,11 @@ static void ibex_spi_init(Object *obj)
 static void ibex_spi_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    //TODO SPI: Complete this
 
-    //dc->realize = sifive_spi_realize;
+    dc->realize = ibex_spi_realize;
     dc->reset = ibex_spi_reset;
-    //dc->vmsd = &vmstate_sifive;
+    dc->vmsd = &vmstate_ibex;
     device_class_set_props(dc, ibex_spi_properties);
     //dc->props = ibex_spi_properties;
 }
