@@ -34,7 +34,9 @@ static const MemMapEntry ibex_memmap[] = {
     [IBEX_DEV_FLASH] =          {  0x20000000,  0x80000 },
     [IBEX_DEV_UART] =           {  0x40000000,  0x1000  },
     [IBEX_DEV_GPIO] =           {  0x40040000,  0x1000  },
-    [IBEX_DEV_SPI] =            {  0x40050000,  0x1000  },
+    [IBEX_DEV_SPI_DEVICE] =     {  0x40050000,  0x1000  },
+    [IBEX_DEV_SPI_HOST0] =      {  0x40060000,  0x1000  },
+    [IBEX_DEV_SPI_HOST1] =      {  0x40070000,  0x1000  },
     [IBEX_DEV_I2C] =            {  0x40080000,  0x1000  },
     [IBEX_DEV_PATTGEN] =        {  0x400e0000,  0x1000  },
     [IBEX_DEV_TIMER] =          {  0x40100000,  0x1000  },
@@ -120,6 +122,7 @@ static void lowrisc_ibex_soc_init(Object *obj)
     object_initialize_child(obj, "timer", &s->timer, TYPE_IBEX_TIMER);
 
     object_initialize_child(obj, "spi", &s->spi, TYPE_IBEX_SPI);
+
 }
 
 static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
@@ -198,6 +201,7 @@ static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
                        3, qdev_get_gpio_in(DEVICE(&s->plic),
                        IBEX_UART0_RX_OVERFLOW_IRQ));
 
+    /* Timer */
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->timer), errp)) {
         return;
     }
@@ -209,13 +213,20 @@ static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
                           qdev_get_gpio_in(DEVICE(qemu_get_cpu(0)),
                                            IRQ_M_TIMER));
 
-    /* SPI */
-    //TODO SPI: Connect SPI
+    /* SPI-HOST0 */
+    printf("QEMU: SPI-HOST0 CONNECT\n");
+    //TODO SPI: Connect SPI incomplete
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->spi), errp)) {
+        return;
+    }
+    //TODO SPI: sysbus_connect_irq verify args
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->spi), 0, memmap[IBEX_DEV_SPI_HOST0].base);
+    sysbus_connect_irq(SYS_BUS_DEVICE(&s->spi),
+                       0, qdev_get_gpio_in(DEVICE(&s->plic),
+                       IBEX_SPI0_IRQ));
 
     create_unimplemented_device("riscv.lowrisc.ibex.gpio",
         memmap[IBEX_DEV_GPIO].base, memmap[IBEX_DEV_GPIO].size);
-    create_unimplemented_device("riscv.lowrisc.ibex.spi",
-        memmap[IBEX_DEV_SPI].base, memmap[IBEX_DEV_SPI].size);
     create_unimplemented_device("riscv.lowrisc.ibex.i2c",
         memmap[IBEX_DEV_I2C].base, memmap[IBEX_DEV_I2C].size);
     create_unimplemented_device("riscv.lowrisc.ibex.pattgen",
