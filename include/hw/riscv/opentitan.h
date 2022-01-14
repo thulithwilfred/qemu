@@ -29,6 +29,10 @@
 #define TYPE_RISCV_IBEX_SOC "riscv.lowrisc.ibex.soc"
 OBJECT_DECLARE_SIMPLE_TYPE(LowRISCIbexSoCState, RISCV_IBEX_SOC)
 
+#define OPENTITAN_NUM_SPI_HOSTS 2
+#define OPENTITAN_SPI_HOST0 0
+#define OPENTITAN_SPI_HOST1 1
+
 struct LowRISCIbexSoCState {
     /*< private >*/
     SysBusDevice parent_obj;
@@ -38,7 +42,7 @@ struct LowRISCIbexSoCState {
     SiFivePLICState plic;
     IbexUartState uart;
     IbexTimerState timer;
-    IbexSPIState spi;
+    IbexSPIState spi_host[OPENTITAN_NUM_SPI_HOSTS];
 
     MemoryRegion flash_mem;
     MemoryRegion rom;
@@ -93,7 +97,10 @@ enum {
 //TODO SPI: Check SPI val
 enum {
     IBEX_TIMER_TIMEREXPIRED0_0 = 126,
-    IBEX_SPI0_IRQ = 9,
+    IBEX_SPI_HOST1_SPI_EVENT_IRQ = 75,
+    IBEX_SPI_HOST1_ERR_IRQ = 74,
+    IBEX_SPI_HOST0_SPI_EVENT_IRQ = 73,
+    IBEX_SPI_HOST0_ERR_IRQ = 72,
     IBEX_UART0_RX_PARITY_ERR_IRQ = 8,
     IBEX_UART0_RX_TIMEOUT_IRQ = 7,
     IBEX_UART0_RX_BREAK_ERR_IRQ = 6,
