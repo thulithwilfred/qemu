@@ -42,7 +42,7 @@ struct LowRISCIbexSoCState {
     SiFivePLICState plic;
     IbexUartState uart;
     IbexTimerState timer;
-    IbexSPIState spi_host[OPENTITAN_NUM_SPI_HOSTS];
+    IbexSPIHostState spi_host[OPENTITAN_NUM_SPI_HOSTS];
 
     MemoryRegion flash_mem;
     MemoryRegion rom;

@@ -33,7 +33,6 @@
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 
-
 #ifndef IBEX_SPI_HOST_ERR_DEBUG
 #define IBEX_SPI_HOST_ERR_DEBUG 0
 #endif
@@ -49,7 +48,7 @@
 static void ibex_spi_host_reset(DeviceState *dev) 
 {
     DB_PRINT("Resetting Ibex SPI\n");
-    IbexSPIState *s = IBEX_SPI_HOST(dev);
+    IbexSPIHostState *s = IBEX_SPI_HOST(dev);
 
     /* SPI Host Register Reset */
     s->regs[IBEX_SPI_HOST_INTR_STATE]   = 0x00;
@@ -69,7 +68,6 @@ static void ibex_spi_host_reset(DeviceState *dev)
     s->regs[IBEX_SPI_HOST_ERROR_STATUS] = 0x00;
     s->regs[IBEX_SPI_HOST_EVENT_ENABLE] = 0x00;
 
-
     fifo8_reset(&s->rx_fifo);
     fifo8_reset(&s->tx_fifo);    
 
@@ -78,14 +76,14 @@ static void ibex_spi_host_reset(DeviceState *dev)
 }
 
 /* check if we need to trigger an intr */
-static void ibex_spi_host_irq(IbexSPIState *s)
+static void ibex_spi_host_irq(IbexSPIHostState *s)
 {
     //TODO SPI: Complete IRQ
     DB_PRINT("IRQ: Triggered\n");
 }
 
 
-static void ibex_spi_transfer(IbexSPIState *s) 
+static void ibex_spi_host_transfer(IbexSPIHostState *s) 
 {
     uint8_t rx, tx;
 
@@ -108,7 +106,7 @@ static void ibex_spi_transfer(IbexSPIState *s)
 static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
                                      unsigned int size)
 {
-    IbexSPIState *s = opaque;
+    IbexSPIHostState *s = opaque;
     uint64_t rc = 0;
     //TODO RM:
     printf("QEMU: SPI REG READ\n");
@@ -146,7 +144,7 @@ static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
 static void ibex_spi_host_write(void *opaque, hwaddr addr,
                                 uint64_t val64, unsigned int size)
 {
-    IbexSPIState *s = opaque;
+    IbexSPIHostState *s = opaque;
     uint32_t value = val64;
     //TODO RM:
     printf("QEMU: SPI REG WRITE\n");
@@ -168,7 +166,7 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
             break;
         case IBEX_SPI_HOST_TXDATA:
             fifo8_push(&s->tx_fifo, value);
-            ibex_spi_transfer(s);
+            ibex_spi_host_transfer(s);
             break;
         case IBEX_SPI_HOST_ERROR_ENABLE...IBEX_SPI_HOST_EVENT_ENABLE:
             s->regs[addr] = value;
@@ -189,7 +187,7 @@ static const MemoryRegionOps ibex_spi_ops = {
 };
 
 static Property ibex_spi_properties[] = {
-    DEFINE_PROP_UINT8("cs-width", IbexSPIState, cs_width, 1),
+    DEFINE_PROP_UINT8("cs-width", IbexSPIHostState, cs_width, 1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -205,7 +203,7 @@ static const VMStateDescription vmstate_ibex = {
 
 static void ibex_spi_host_realize(DeviceState *dev, Error **errp)
 {
-    IbexSPIState *s = IBEX_SPI_HOST(dev);
+    IbexSPIHostState *s = IBEX_SPI_HOST(dev);
     int i;
     //TODO RM:
     printf("QEMU: SPI REALIZE\n");
@@ -224,7 +222,7 @@ static void ibex_spi_host_realize(DeviceState *dev, Error **errp)
 
 static void ibex_spi_host_init(Object *obj)
 {
-    IbexSPIState *s = IBEX_SPI_HOST(obj);
+    IbexSPIHostState *s = IBEX_SPI_HOST(obj);
     //TODO RM:
     printf("QEMU: SPI INIT\n");
 
@@ -249,7 +247,7 @@ static void ibex_spi_host_class_init(ObjectClass *klass, void *data)
 static const TypeInfo ibex_spi_host_info = {
     .name          = TYPE_IBEX_SPI_HOST,
     .parent        = TYPE_SYS_BUS_DEVICE,
-    .instance_size = sizeof(IbexSPIState),
+    .instance_size = sizeof(IbexSPIHostState),
     .instance_init = ibex_spi_host_init,
     .class_init    = ibex_spi_host_class_init,
 };

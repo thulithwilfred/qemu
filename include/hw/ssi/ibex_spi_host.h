@@ -35,7 +35,7 @@
 
 #define TYPE_IBEX_SPI_HOST "ibex-spi"
 #define IBEX_SPI_HOST(obj) \
-    OBJECT_CHECK(IbexSPIState, (obj), TYPE_IBEX_SPI_HOST)
+    OBJECT_CHECK(IbexSPIHostState, (obj), TYPE_IBEX_SPI_HOST)
 
 /* SPI Registers */
 #define IBEX_SPI_HOST_INTR_STATE         (0x00 / 4)  //rw
@@ -72,7 +72,7 @@ typedef struct {
     uint8_t cs_width;
     qemu_irq *cs_lines;
     SSIBus *ssi;
-} IbexSPIState;
+} IbexSPIHostState;
 
 
 
