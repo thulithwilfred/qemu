@@ -33,31 +33,30 @@
 #include "qemu/fifo8.h"
 #include "qom/object.h"
 
-#define TYPE_IBEX_SPI "ibex-spi"
-#define IBEX_SPI(obj) \
-    OBJECT_CHECK(IbexSPIState, (obj), TYPE_IBEX_SPI)
-
+#define TYPE_IBEX_SPI_HOST "ibex-spi"
+#define IBEX_SPI_HOST(obj) \
+    OBJECT_CHECK(IbexSPIState, (obj), TYPE_IBEX_SPI_HOST)
 
 /* SPI Registers */
-#define IBEX_SPI_INTR_STATE         (0x00 / 4)  //rw
-#define IBEX_SPI_INTR_ENABLE        (0x04 / 4)  //rw
-#define IBEX_SPI_INTR_TEST          (0x08 / 4)  //wo
-#define IBEX_SPI_ALERT_TEST         (0x0c / 4)  //wo
-#define IBEX_SPI_CONTROL            (0x10 / 4)  //rw
-#define IBEX_SPI_STATUS             (0x14 / 4)  //ro
-#define IBEX_SPI_CONFIGOPTS         (0x18 / 4)  //rw
-#define IBEX_SPI_CSID               (0x1c / 4)  //rw
-#define IBEX_SPI_COMMAND            (0x20 / 4)  //wo
+#define IBEX_SPI_HOST_INTR_STATE         (0x00 / 4)  //rw
+#define IBEX_SPI_HOST_INTR_ENABLE        (0x04 / 4)  //rw
+#define IBEX_SPI_HOST_INTR_TEST          (0x08 / 4)  //wo
+#define IBEX_SPI_HOST_ALERT_TEST         (0x0c / 4)  //wo
+#define IBEX_SPI_HOST_CONTROL            (0x10 / 4)  //rw
+#define IBEX_SPI_HOST_STATUS             (0x14 / 4)  //ro
+#define IBEX_SPI_HOST_CONFIGOPTS         (0x18 / 4)  //rw
+#define IBEX_SPI_HOST_CSID               (0x1c / 4)  //rw
+#define IBEX_SPI_HOST_COMMAND            (0x20 / 4)  //wo
 /* RX/TX Modelled by FIFO */
-#define IBEX_SPI_RXDATA             (0x24 / 4)  //
-#define IBEX_SPI_TXDATA             (0x28 / 4)  //
+#define IBEX_SPI_HOST_RXDATA             (0x24 / 4)  //
+#define IBEX_SPI_HOST_TXDATA             (0x28 / 4)  //
 
-#define IBEX_SPI_ERROR_ENABLE       (0x2c / 4)  //rw
-#define IBEX_SPI_ERROR_STATUS       (0x30 / 4)  //rw
-#define IBEX_SPI_EVENT_ENABLE       (0x34 / 4)  //rw
+#define IBEX_SPI_HOST_ERROR_ENABLE       (0x2c / 4)  //rw
+#define IBEX_SPI_HOST_ERROR_STATUS       (0x30 / 4)  //rw
+#define IBEX_SPI_HOST_EVENT_ENABLE       (0x34 / 4)  //rw
 
 /*  Max Register (Based on addr) */
-#define IBEX_SPI_MAX_REGS      (IBEX_SPI_EVENT_ENABLE + 1)
+#define IBEX_SPI_HOST_MAX_REGS      (IBEX_SPI_HOST_EVENT_ENABLE + 1)
 
 typedef struct {
     /* <private> */
@@ -65,7 +64,7 @@ typedef struct {
 
     /* <public> */
     MemoryRegion mmio;
-    uint32_t regs[IBEX_SPI_MAX_REGS];
+    uint32_t regs[IBEX_SPI_HOST_MAX_REGS];
     Fifo8 rx_fifo;
     Fifo8 tx_fifo;
 
@@ -74,5 +73,7 @@ typedef struct {
     qemu_irq *cs_lines;
     SSIBus *ssi;
 } IbexSPIState;
+
+
 
 #endif
