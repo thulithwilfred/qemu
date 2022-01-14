@@ -24,8 +24,8 @@
  * THE SOFTWARE.
  */
 
-#ifndef IBEX_SPI_H
-#define IBEX_SPI_H
+#ifndef IBEX_SPI_HOST_H
+#define IBEX_SPI_HOST_H
 
 #include "hw/sysbus.h"
 #include "hw/hw.h"

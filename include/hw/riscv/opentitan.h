@@ -23,7 +23,7 @@
 #include "hw/intc/sifive_plic.h"
 #include "hw/char/ibex_uart.h"
 #include "hw/timer/ibex_timer.h"
-#include "hw/ssi/ibex_spi.h"
+#include "hw/ssi/ibex_spi_host.h"
 #include "qom/object.h"
 
 #define TYPE_RISCV_IBEX_SOC "riscv.lowrisc.ibex.soc"
