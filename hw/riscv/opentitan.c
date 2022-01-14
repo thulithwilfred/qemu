@@ -122,7 +122,7 @@ static void lowrisc_ibex_soc_init(Object *obj)
     object_initialize_child(obj, "timer", &s->timer, TYPE_IBEX_TIMER);
 
     for (int i = 0; i < OPENTITAN_NUM_SPI_HOSTS; i++) {
-        object_initialize_child(obj, "spi_host[*]", &s->spi_host[i], TYPE_IBEX_SPI);
+        object_initialize_child(obj, "spi_host[*]", &s->spi_host[i], TYPE_IBEX_SPI_HOST);
     }
 }
 
