@@ -1,7 +1,8 @@
 
 /*
  * QEMU model of the Ibex SPI Controller
- *
+ * SPEC Reference: https://docs.opentitan.org/hw/ip/spi_host/doc/
+ * 
  * Copyright (C) 2018 Western Digital
  * Copyright (C) 2018 Wilfred Mallawa <wilfred.mallawa@wdc.com>
  *
@@ -32,6 +33,8 @@
 #include "hw/ssi/ssi.h"
 #include "qemu/fifo8.h"
 #include "qom/object.h"
+#include "hw/registerfields.h"
+#include "qemu/timer.h"
 
 #define TYPE_IBEX_SPI_HOST "ibex-spi"
 #define IBEX_SPI_HOST(obj) \
@@ -58,6 +61,8 @@
 /*  Max Register (Based on addr) */
 #define IBEX_SPI_HOST_MAX_REGS      (IBEX_SPI_HOST_EVENT_ENABLE + 1)
 
+#define TX_INTERRUPT_TRIGGER_DELAY_NS 100
+
 typedef struct {
     /* <private> */
     SysBusDevice parent_obj;
@@ -67,8 +72,10 @@ typedef struct {
     uint32_t regs[IBEX_SPI_HOST_MAX_REGS];
     Fifo8 rx_fifo;
     Fifo8 tx_fifo;
+    QEMUTimer *fifo_trigger_handle;
 
-    qemu_irq irq;
+    qemu_irq event;
+    qemu_irq host_err;
     uint8_t cs_width;
     qemu_irq *cs_lines;
     SSIBus *ssi;
