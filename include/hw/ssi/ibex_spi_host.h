@@ -61,7 +61,9 @@
 /*  Max Register (Based on addr) */
 #define IBEX_SPI_HOST_MAX_REGS      (IBEX_SPI_HOST_EVENT_ENABLE + 1)
 
+/* MISC */
 #define TX_INTERRUPT_TRIGGER_DELAY_NS 100
+#define BIDIRECTIONAL_TRANSFER 3
 
 typedef struct {
     /* <private> */

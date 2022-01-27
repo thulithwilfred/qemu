@@ -36,13 +36,13 @@
 
 REG32(INTR_STATE, 0x00)
     FIELD(INTR_STATE, ERROR, 0, 1)
-    FIELD(INTR_STATE, SPI_ERROR, 1, 1)
+    FIELD(INTR_STATE, SPI_EVENT, 1, 1)
 REG32(INTR_ENABLE, 0x04)
     FIELD(INTR_ENABLE, ERROR, 0, 1)
-    FIELD(INTR_ENABLE, SPI_ERROR, 1, 1)
+    FIELD(INTR_ENABLE, SPI_EVENT, 1, 1)
 REG32(INTR_TEST, 0x08)
     FIELD(INTR_TEST, ERROR, 0, 1)
-    FIELD(INTR_TEST, SPI_ERROR, 1, 1)
+    FIELD(INTR_TEST, SPI_EVENT, 1, 1)
 REG32(ALERT_TEST, 0x0c)
     FIELD(ALERT_TEST, FETAL_TEST, 0, 1)
 REG32(CONTROL, 0x10)
@@ -115,6 +115,26 @@ REG32(EVENT_ENABLE, 0x30)
 
 #define DB_PRINT(fmt, args...) DB_PRINT_L(1, fmt, ## args)
 
+static inline uint8_t div4_round_up(uint8_t dividend) {
+    return ((dividend + (3))/4);
+}
+
+static void ibex_spi_rxfifo_reset(IbexSPIHostState *s)
+{
+    /* Empty the RX FIFO and assert RXEMPTY */
+    fifo8_reset(&s->rx_fifo);
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_RXFULL_MASK;
+    s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_RXEMPTY_MASK;
+}
+
+static void ibex_spi_txfifo_reset(IbexSPIHostState *s)  
+{   
+    /* Empty the TX FIFO and assert TXEMPTY */
+    fifo8_reset(&s->tx_fifo);
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXFULL_MASK;
+    s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_TXEMPTY_MASK;
+}
+
 static void ibex_spi_host_reset(DeviceState *dev) 
 {
     DB_PRINT("Resetting Ibex SPI\n");
@@ -138,28 +158,81 @@ static void ibex_spi_host_reset(DeviceState *dev)
     s->regs[IBEX_SPI_HOST_ERROR_STATUS] = 0x00;
     s->regs[IBEX_SPI_HOST_EVENT_ENABLE] = 0x00;
 
-    fifo8_reset(&s->rx_fifo);
-    fifo8_reset(&s->tx_fifo);    
-
-    DB_PRINT("Reset OK\n");
+    ibex_spi_rxfifo_reset(s);
+    ibex_spi_txfifo_reset(s);
+    
     return;
 }
 
-/* Check if we need to trigger an interrupt */
+/* Check if we need to trigger an interrupt.
+ * The two interrupts lines (host_err and event) can 
+ * be enabled seperately in 'IBEX_SPI_HOST_INTR_ENABLE'.
+ * 
+ * Interrupts are triggered based on the ones 
+ * enabled in the `IBEX_SPI_HOST_EVENT_ENABLE` and `IBEX_SPI_HOST_ERROR_ENABLE`.
+ */
 static void ibex_spi_host_irq(IbexSPIHostState *s)
-{
-    //TODO SPI: Complete IRQ
-    //fprintf(stderr, "IRQ: Triggered\n");
-    // DB_PRINT("IRQ: Triggered\n");
-    qemu_set_irq(s->event, 1);
+{    
+    bool error_en = s->regs[IBEX_SPI_HOST_INTR_ENABLE] & R_INTR_ENABLE_ERROR_MASK;
+    bool event_en = s->regs[IBEX_SPI_HOST_INTR_ENABLE] & R_INTR_ENABLE_SPI_EVENT_MASK;
+    bool err_pending = s->regs[IBEX_SPI_HOST_INTR_STATE] & R_INTR_STATE_ERROR_MASK;
+    bool status_pending = s->regs[IBEX_SPI_HOST_INTR_STATE] & R_INTR_STATE_SPI_EVENT_MASK;
+    int err_irq = 0, event_irq = 0;
+
+    /* Error IRQ enabled and Error IRQ Cleared*/
+    if (error_en && !err_pending) {
+        /* Event enabled, Interrupt Test Error */
+        if (s->regs[IBEX_SPI_HOST_INTR_TEST] & R_INTR_TEST_ERROR_MASK) {
+            printf("1\n");
+            err_irq = 1;
+        } else if ((s->regs[IBEX_SPI_HOST_ERROR_ENABLE] &  R_ERROR_ENABLE_CMDBUSY_MASK) &&
+                    s->regs[IBEX_SPI_HOST_ERROR_STATUS] & R_ERROR_STATUS_CMDBUSY_MASK) {
+            /* Wrote to COMMAND when not READY */
+            printf("2\n");
+            err_irq = 1;
+        } 
+        if (err_irq) {
+            s->regs[IBEX_SPI_HOST_INTR_STATE] |= R_INTR_STATE_ERROR_MASK;
+        }
+        qemu_set_irq(s->host_err, err_irq);
+    }
+    
+    /* Event IRQ Enabled and Event IRQ Cleared */
+    if (event_en && !status_pending) {
+        if (s->regs[IBEX_SPI_HOST_INTR_TEST] & R_INTR_TEST_SPI_EVENT_MASK) {
+            /* Event enabled, Interrupt Test Event */
+            event_irq = 1;
+            printf("3\n");
+        } else if ((s->regs[IBEX_SPI_HOST_EVENT_ENABLE] & R_EVENT_ENABLE_READY_MASK) &&
+                    (s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_READY_MASK)) {
+            /* SPI Host ready for next command */
+            event_irq = 1;   
+            printf("4\n");  
+        } else if ((s->regs[IBEX_SPI_HOST_EVENT_ENABLE] & R_EVENT_ENABLE_TXEMPTY_MASK) &&
+                    (s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_TXEMPTY_MASK)) {
+            /* SPI TXEMPTY, TXFIFO drained */
+            event_irq = 1;
+            printf("5\n");
+        } else if ((s->regs[IBEX_SPI_HOST_EVENT_ENABLE] & R_EVENT_ENABLE_RXFULL_MASK) &&
+                    (s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_RXFULL_MASK)) {
+            /* SPI RXFULL, RXFIFO  full */
+            event_irq = 1;
+            printf("6\n");
+        }
+        if (event_irq) {
+            s->regs[IBEX_SPI_HOST_INTR_STATE] |= R_INTR_STATE_SPI_EVENT_MASK;
+        }
+        qemu_set_irq(s->event, event_irq);
+    }
 }
 
 static void ibex_spi_host_transfer(IbexSPIHostState *s) 
 {
     uint32_t rx, tx;
-    /* Extract LSB: tx_len */
-    uint8_t segment_len = (s->regs[IBEX_SPI_HOST_COMMAND] & 0xFF);
-
+    /* Extract tx_len */
+    uint8_t segment_len = ((s->regs[IBEX_SPI_HOST_COMMAND] & R_COMMAND_LEN_MASK)
+                          >> R_COMMAND_LEN_SHIFT);
+    printf("QEMU: WRITE DATA %d\n\n", segment_len);
     while (segment_len > 0) {
         if (fifo8_is_empty(&s->tx_fifo)) {
             /* Dummy TX Byte */
@@ -179,13 +252,29 @@ static void ibex_spi_host_transfer(IbexSPIHostState *s)
         if (!fifo8_is_full(&s->rx_fifo)) {
          fifo8_push(&s->rx_fifo, rx);
         } else {
-             qemu_log_mask(LOG_GUEST_ERROR, "%s: Rx FIFO full\n", __func__);  
+            /* Assert RXFULL */
+            s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_RXFULL_MASK;
         }
         --segment_len;
     }
+    
+    /* Assert Ready */
+    s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_READY_MASK;
+    /* Set RXQD */
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_RXQD_MASK;
+    s->regs[IBEX_SPI_HOST_STATUS] |= (R_STATUS_RXQD_MASK & div4_round_up(segment_len));
+    /* Set TXQD */
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXQD_MASK;
+    s->regs[IBEX_SPI_HOST_STATUS] |= div4_round_up(fifo8_num_used(&s->tx_fifo)) & R_STATUS_TXQD_MASK;
+    /* Clear TXFULL */
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXFULL_MASK;
+    /* Assert TXEMPTY and drop remaining bytes that exceed segment_len */
+    ibex_spi_txfifo_reset(s);
+    /* Reset RXEMPTY */
+    s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_RXEMPTY_MASK;
+    
     ibex_spi_host_irq(s);
 }
-
 
 static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
                                      unsigned int size)
@@ -202,7 +291,6 @@ static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
     }
     /* Match reg index */
     addr = addr >> 2;
-    //TODO SPI: Expand these if required
     switch (addr) {
     /* Skipping any W/O registers */
     case IBEX_SPI_HOST_INTR_STATE...IBEX_SPI_HOST_INTR_ENABLE:
@@ -211,10 +299,13 @@ static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
         rc = s->regs[addr];
         break;
     case IBEX_SPI_HOST_RXDATA:
+        /* Clear RXFULL */
+        s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_RXFULL_MASK;
+
         for (int i = 0; i < 4; ++i) {
             if (fifo8_is_empty(&s->rx_fifo)) {
-                qemu_log_mask(LOG_GUEST_ERROR,
-                              "%s: Rx Fifo empty\n", __func__);
+                /* Assert RXEMPTY, no IRQ */
+                s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_RXEMPTY_MASK;
                 return rc;
             }
             rx_byte = fifo8_pop(&s->rx_fifo);
@@ -240,8 +331,9 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
     uint64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     uint32_t val32 = val64;
     uint32_t shift_mask = 0xff;
+    uint8_t txqd_len;
     //TODO RM:
-    printf("Write Address: 0x%" HWADDR_PRIx ", value: 0x%x\n", addr, val32);
+    //printf("Write Address: 0x%" HWADDR_PRIx ", value: 0x%x\n", addr, val32);
     DB_PRINT("Address: 0x%" HWADDR_PRIx ", value: 0x%x\n", addr, val32);
 
     if (s == NULL) {
@@ -250,20 +342,18 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
     }  
     /* Match reg index */
     addr = addr >> 2;
-
+    
     switch (addr) {
     /* Skipping any R/O registers */
-    case IBEX_SPI_HOST_INTR_STATE:
-        /* Write 1 clear */
-        s->regs[addr] &= ~val32;
-        ibex_spi_host_irq(s);
+    case IBEX_SPI_HOST_INTR_STATE...IBEX_SPI_HOST_INTR_ENABLE:
+        s->regs[addr] = val32;
         break;
-    case IBEX_SPI_HOST_INTR_ENABLE...IBEX_SPI_HOST_INTR_TEST:
-        s->regs[addr] |= val32;
+    case IBEX_SPI_HOST_INTR_TEST:
+        s->regs[addr] = val32;
         ibex_spi_host_irq(s);
         break;
     case IBEX_SPI_HOST_ALERT_TEST:
-        s->regs[addr] |= val32;
+        s->regs[addr] = val32;
         qemu_log_mask(LOG_UNIMP,
                         "%s: SPI_ALERT_TEST is not supported\n", __func__);
         break;
@@ -293,9 +383,23 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
         break;
     case IBEX_SPI_HOST_COMMAND:
         s->regs[addr] = val32;
+        /* SPI not ready, IRQ Error */
+        if (!(s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_READY_MASK)) {
+            s->regs[IBEX_SPI_HOST_ERROR_STATUS] |= R_ERROR_STATUS_CMDBUSY_MASK;
+            ibex_spi_host_irq(s);
+            return;    
+        }
+        /* Assert Not Ready */
+        s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_READY_MASK;
+
         /* Set Transfer Callback */
         timer_mod(s->fifo_trigger_handle, current_time +
             (TX_INTERRUPT_TRIGGER_DELAY_NS * 2));
+
+        if (((val32 & R_COMMAND_DIRECTION_MASK) >> R_COMMAND_DIRECTION_SHIFT) != BIDIRECTIONAL_TRANSFER) {
+             qemu_log_mask(LOG_UNIMP,
+                          "%s: Rx Only/Tx Only are not supported\n", __func__);            
+        } 
 
         if (val32 & R_COMMAND_CSAAT_MASK)  {
             qemu_log_mask(LOG_UNIMP,
@@ -305,30 +409,33 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
             qemu_log_mask(LOG_UNIMP,
                           "%s: SPEED is not supported\n", __func__);           
         }
-        if (val32 & R_COMMAND_DIRECTION_MASK)  {
-            qemu_log_mask(LOG_UNIMP,
-                          "%s: DIRECTION is not supported\n", __func__);           
-        }
         break;
     case IBEX_SPI_HOST_TXDATA:
+        /* Attempting to write when TXFULL */
+        if (fifo8_num_free(&s->tx_fifo) < 4) {
+            s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_TXFULL_MASK;
+            ibex_spi_host_irq(s);
+            return;
+        }
+
         /* Split and push tx_val to tx access register in byte-order */
         for (int i = 0; i < 4; ++i) {
-            if (fifo8_is_full(&s->tx_fifo)) {
-                qemu_log_mask(LOG_GUEST_ERROR,
-                              "%s: Tx Fifo full\n", __func__);
-                return;
-            }
             fifo8_push(&s->tx_fifo, (val32 & shift_mask) >> (i * 8) );
             shift_mask = shift_mask << 8;
-        }   
+        }
+        /* Reset TXEMPTY */
+        s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXEMPTY_MASK;
+        /* Update TXQD */
+        txqd_len = (s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_TXQD_MASK) >> R_STATUS_TXQD_SHIFT;
+        txqd_len++;
+        s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXQD_MASK;
+        s->regs[IBEX_SPI_HOST_STATUS] |= txqd_len;
+        /* Assert Ready */
+        s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_READY_MASK;
         break;
     case IBEX_SPI_HOST_ERROR_ENABLE:
         s->regs[addr] = val32;
 
-        if (val32 & R_ERROR_ENABLE_CMDBUSY_MASK)  {
-            qemu_log_mask(LOG_UNIMP,
-                          "%s: CMDBUSY is not supported\n", __func__);           
-        }
         if (val32 & R_ERROR_ENABLE_OVERFLOW_MASK)  {
             qemu_log_mask(LOG_UNIMP,
                           "%s: OVERFLOW is not supported\n", __func__);           
@@ -359,14 +466,6 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
     /* Controls which classes of SPI events raise an interrupt. */
         s->regs[addr] = val32;
         
-        if (val32 & R_EVENT_ENABLE_RXFULL_MASK)  {
-            qemu_log_mask(LOG_UNIMP,
-                          "%s: RXFULL is not supported\n", __func__);           
-        }
-        if (val32 & R_EVENT_ENABLE_TXEMPTY_MASK)  {
-            qemu_log_mask(LOG_UNIMP,
-                          "%s: TXEMPTY is not supported\n", __func__);           
-        }
         if (val32 & R_EVENT_ENABLE_RXWM_MASK)  {
             qemu_log_mask(LOG_UNIMP,
                           "%s: RXWM is not supported\n", __func__);           
@@ -375,10 +474,7 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
             qemu_log_mask(LOG_UNIMP,
                           "%s: TXWM is not supported\n", __func__);           
         }
-        if (val32 & R_EVENT_ENABLE_READY_MASK)  {
-            qemu_log_mask(LOG_UNIMP,
-                          "%s: READY is not supported\n", __func__);           
-        }
+
         if (val32 & R_EVENT_ENABLE_IDLE_MASK)  {
             qemu_log_mask(LOG_UNIMP,
                           "%s: IDLE is not supported\n", __func__);           
@@ -447,9 +543,9 @@ static void ibex_spi_host_init(Object *obj)
     //TODO RM:
     printf("QEMU: SPI INIT\n");
 
-    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->event);
     sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->host_err);
-
+    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->event);
+    
     memory_region_init_io(&s->mmio, obj, &ibex_spi_ops, s,
                           TYPE_IBEX_SPI_HOST, 0x1000);
     sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);
@@ -458,8 +554,6 @@ static void ibex_spi_host_init(Object *obj)
 static void ibex_spi_host_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    //TODO SPI: Complete this
-
     dc->realize = ibex_spi_host_realize;
     dc->reset = ibex_spi_host_reset;
     dc->vmsd = &vmstate_ibex;
