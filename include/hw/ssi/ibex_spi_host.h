@@ -58,12 +58,16 @@
 #define IBEX_SPI_HOST_ERROR_STATUS       (0x30 / 4)  //rw
 #define IBEX_SPI_HOST_EVENT_ENABLE       (0x34 / 4)  //rw
 
+/* FIFO Len in Bytes */
+#define IBEX_SPI_HOST_TXFIFO_LEN         288
+#define IBEX_SPI_HOST_RXFIFO_LEN         256
+
 /*  Max Register (Based on addr) */
-#define IBEX_SPI_HOST_MAX_REGS      (IBEX_SPI_HOST_EVENT_ENABLE + 1)
+#define IBEX_SPI_HOST_MAX_REGS           (IBEX_SPI_HOST_EVENT_ENABLE + 1)
 
 /* MISC */
-#define TX_INTERRUPT_TRIGGER_DELAY_NS 100
-#define BIDIRECTIONAL_TRANSFER 3
+#define TX_INTERRUPT_TRIGGER_DELAY_NS    100
+#define BIDIRECTIONAL_TRANSFER           3
 
 typedef struct {
     /* <private> */
@@ -72,13 +76,15 @@ typedef struct {
     /* <public> */
     MemoryRegion mmio;
     uint32_t regs[IBEX_SPI_HOST_MAX_REGS];
+    /* Multi-reg that sets config opts per CS */
+    uint32_t *config_opts;
     Fifo8 rx_fifo;
     Fifo8 tx_fifo;
     QEMUTimer *fifo_trigger_handle;
 
     qemu_irq event;
     qemu_irq host_err;
-    uint8_t cs_width;
+    uint8_t num_cs;
     qemu_irq *cs_lines;
     SSIBus *ssi;
 } IbexSPIHostState;
