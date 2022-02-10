@@ -274,7 +274,7 @@ static void ibex_spi_host_transfer(IbexSPIHostState *s)
     s->regs[IBEX_SPI_HOST_STATUS] |= (R_STATUS_RXQD_MASK & div4_round_up(segment_len));
     /* Set TXQD */
     s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXQD_MASK;
-    s->regs[IBEX_SPI_HOST_STATUS] |= div4_round_up(fifo8_num_used(&s->tx_fifo)) & R_STATUS_TXQD_MASK;
+    s->regs[IBEX_SPI_HOST_STATUS] |= (fifo8_num_used(&s->tx_fifo) / 4) & R_STATUS_TXQD_MASK;
     /* Clear TXFULL */
     s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXFULL_MASK;
     /* Assert TXEMPTY and drop remaining bytes that exceed segment_len */
@@ -332,7 +332,6 @@ static uint64_t ibex_spi_host_read(void *opaque, hwaddr addr,
             }
             rx_byte = fifo8_pop(&s->rx_fifo);
             rc |= rx_byte << (i * 8);
-            //printf("SENDING: %d\n", rx_byte << (i * 8));
         }         
         break;
     case IBEX_SPI_HOST_ERROR_ENABLE...IBEX_SPI_HOST_EVENT_ENABLE:
@@ -352,7 +351,7 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
     IbexSPIHostState *s = opaque;
     uint64_t current_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     uint32_t val32 = val64;
-    //uint32_t shift_mask = 0xff;
+    uint32_t shift_mask = 0xff;
     uint8_t txqd_len;
     //TODO RM:
     //printf("Write Address: 0x%" HWADDR_PRIx ", value: 0x%x\n", addr, val32);
@@ -438,20 +437,32 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
         }
         break;
     case IBEX_SPI_HOST_TXDATA:
-        /* Attempting to write when TXFULL */
-        if (fifo8_is_full(&s->tx_fifo)) {
-            s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_TXFULL_MASK;
-            ibex_spi_host_irq(s);
-            return;
+        for (int i = 0; i < 4; ++i) {
+             /* Attempting to write when TXFULL */
+            if (fifo8_is_full(&s->tx_fifo)) {
+                /* Assert RXEMPTY, no IRQ */
+                s->regs[IBEX_SPI_HOST_STATUS] |= R_STATUS_TXFULL_MASK;
+                ibex_spi_host_irq(s);
+                return;
+            }
+            //Byte ordering is set by the IP
+            if ((s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_BYTEORDER_MASK) == 0) {
+                //LE: LSB transmitted first (default for ibex processor)
+                shift_mask = 0xff << (i * 8);
+            } else {
+                //BE: MSB transmitted first
+                qemu_log_mask(LOG_UNIMP,
+                             "%s: Big endian is not supported\n", __func__);   
+            }
+
+            fifo8_push(&s->tx_fifo, (val32 & shift_mask) >> (i * 8));
         }
-        //TODO Size based on sizearg 32bit..
-        fifo8_push(&s->tx_fifo, (uint8_t)val32);
 
         /* Reset TXEMPTY */
         s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXEMPTY_MASK;
         /* Update TXQD */
         txqd_len = (s->regs[IBEX_SPI_HOST_STATUS] & R_STATUS_TXQD_MASK) >> R_STATUS_TXQD_SHIFT;
-        txqd_len++;
+        txqd_len += 1;      //Partial bytes (size < 4) are padded, in words.
         s->regs[IBEX_SPI_HOST_STATUS] &= ~R_STATUS_TXQD_MASK;
         s->regs[IBEX_SPI_HOST_STATUS] |= txqd_len;
         /* Assert Ready */
