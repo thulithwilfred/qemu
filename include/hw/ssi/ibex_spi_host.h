@@ -89,6 +89,4 @@ typedef struct {
     SSIBus *ssi;
 } IbexSPIHostState;
 
-
-
 #endif

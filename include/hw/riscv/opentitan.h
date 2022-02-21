@@ -94,7 +94,6 @@ enum {
     IBEX_DEV_PERI,
 };
 
-//TODO SPI: Check SPI val
 enum {
     IBEX_TIMER_TIMEREXPIRED0_0 = 126,
     IBEX_SPI_HOST1_SPI_EVENT_IRQ = 153,
