@@ -122,6 +122,8 @@ static void lowrisc_ibex_soc_init(Object *obj)
 
     object_initialize_child(obj, "timer", &s->timer, TYPE_IBEX_TIMER);
 
+    object_initialize_child(obj, "lifetime_ctrl", &s->lc, TYPE_IBEX_LC_CTRL);
+
     for (int i = 0; i < OPENTITAN_NUM_SPI_HOSTS; i++) {
         object_initialize_child(obj, "spi_host[*]", &s->spi_host[i],
                                 TYPE_IBEX_SPI_HOST);
@@ -241,6 +243,13 @@ static void lowrisc_ibex_soc_realize(DeviceState *dev_soc, Error **errp)
             break;
         }
     }
+
+    /* Life-Cycle Control */
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->lc), errp)) {
+        return;
+    }
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->lc), 0, memmap[IBEX_DEV_LC_CTRL].base);
+
 
     create_unimplemented_device("riscv.lowrisc.ibex.gpio",
         memmap[IBEX_DEV_GPIO].base, memmap[IBEX_DEV_GPIO].size);
