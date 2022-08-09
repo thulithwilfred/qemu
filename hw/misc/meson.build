@@ -141,3 +141,5 @@ softmmu_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 # IBEX Devices
 softmmu_ss.add(when: 'CONFIG_IBEX', if_true: files('ibex_lc_ctrl.c'))
+softmmu_ss.add(when: 'CONFIG_IBEX', if_true: files('ibex_pm.c'))
+softmmu_ss.add(when: 'CONFIG_IBEX', if_true: files('ibex_flash.c'))

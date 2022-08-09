@@ -25,6 +25,8 @@
 #include "hw/timer/ibex_timer.h"
 #include "hw/ssi/ibex_spi_host.h"
 #include "hw/misc/ibex_lc_ctrl.h"
+#include "hw/misc/ibex_flash.h"
+#include "hw/misc/ibex_pm.h"
 #include "qom/object.h"
 
 #define TYPE_RISCV_IBEX_SOC "riscv.lowrisc.ibex.soc"
@@ -47,6 +49,8 @@ struct LowRISCIbexSoCState {
     IbexTimerState timer;
     IbexLCState lc;
     IbexSPIHostState spi_host[OPENTITAN_NUM_SPI_HOSTS];
+    IbexPMState pm;
+    IbexFlashState flash;
 
     MemoryRegion flash_mem;
     MemoryRegion rom;
@@ -82,6 +86,7 @@ enum {
     IBEX_DEV_CLKMGR,
     IBEX_DEV_PINMUX,
     IBEX_DEV_PADCTRL,
+    IBEX_SRAM_CTRL,
     IBEX_DEV_USBDEV,
     IBEX_DEV_FLASH_CTRL,
     IBEX_DEV_PLIC,
