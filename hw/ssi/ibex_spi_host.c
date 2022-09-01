@@ -53,7 +53,8 @@ REG32(CONTROL, 0x10)
 REG32(STATUS, 0x14)
     FIELD(STATUS, TXQD, 0, 8)
     FIELD(STATUS, RXQD, 18, 8)
-    FIELD(STATUS, CMDQD, 16, 3)
+    //TODO: FIX THIS
+    FIELD(STATUS, CMDQD, 16, 4)
     FIELD(STATUS, RXWM, 20, 1)
     FIELD(STATUS, BYTEORDER, 22, 1)
     FIELD(STATUS, RXSTALL, 23, 1)
@@ -549,6 +550,32 @@ static void ibex_spi_host_write(void *opaque, hwaddr addr,
         qemu_log_mask(LOG_GUEST_ERROR, "Bad offset 0x%" HWADDR_PRIx "\n",
                       addr << 2);
     }
+        // TEST ADD - FIELD1_CLEAR
+        //printf("\nacc--0x%x--%d\n", R_ERROR_STATUS_ACCESSINVAL_MASK, R_ERROR_STATUS_ACCESSINVAL_SHIFT);
+        //printf("\ncomd--0x%x--%d\n",  R_COMMAND_DIRECTION_MASK, R_COMMAND_DIRECTION_SHIFT);
+    uint32_t val = 0xFFFFFFFF;
+    uint32_t ret = FIELD32_1CLEAR(val, ERROR_STATUS, CMDBUSY);
+    printf("\ncheck1: 0x%x\n", ret);
+    ret = FIELD32_1CLEAR(ret, ERROR_STATUS, OVERFLOW);
+    ret = FIELD32_1CLEAR(ret, ERROR_STATUS, CSIDINVAL);
+    ret = FIELD32_1CLEAR(ret, ERROR_STATUS, ACCESSINVAL);
+    printf("\ncheck2: 0x%x\n", ret);
+    // val = 0xFFFFFFFF;
+    // ret = FIELD32_CLEAR(val, COMMAND, DIRECTION);
+    // printf("\ncheck2: 0x%x\n", ret);
+    // val = 0xFFFFFFFF;
+    // ret = FIELD32_CLEAR(val, CSID, CSID);
+    // printf("\ncheck3: 0x%x\n", ret);
+    // val = 0xFFFFFFFF;
+    // ret = FIELD32_CLEAR(val, STATUS, TXQD);
+    // ret = FIELD32_CLEAR(val, STATUS, ACTIVE);
+    // printf("\ncheck4: 0x%x\n", ret);
+    // val = 0x00;
+    // ret = FIELD32_SET(val, CONFIGOPTS, CLKDIV_0);
+    // ret = FIELD32_SET(ret, CONFIGOPTS, CSNLEAD_0);
+    // printf("\ncheck5: 0x%x\n", ret);
+    //printf("len--%d", R_STATUS_TXQD_LENGTH);
+    //printf("MAX: %d %d %d %d", MAX_N_BITS(2), MAX_N_BITS(6), MAX_N_BITS(8), MAX_N_BITS(1));
 }
 
 static const MemoryRegionOps ibex_spi_ops = {
