@@ -191,6 +191,7 @@ pci_nvme_err_startfail(void) "setting controller enable bit failed"
 pci_nvme_err_startfail_virt_state(uint16_t vq, uint16_t vi) "nvme_start_ctrl failed due to ctrl state: vi=%u vq=%u"
 pci_nvme_err_invalid_mgmt_action(uint8_t action) "action=0x%"PRIx8""
 pci_nvme_err_ignored_mmio_vf_offline(uint64_t addr, unsigned size) "addr 0x%"PRIx64" size %d"
+pci_cma_err_openspdm_conn(void) "Failed to connect to OpenSPDM, SPDM disabled"
 
 # undefined behavior
 pci_nvme_ub_mmiowr_misaligned32(uint64_t offset) "MMIO write not 32-bit aligned, offset=0x%"PRIx64""
