@@ -2024,6 +2024,9 @@ static void scsi_disk_emulate_write_data(SCSIRequest *req)
 
 static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
 {
+    // TODO:
+    //  Experiment adding sec prot here!
+    //  Move the sec in out to this fn from scsi-bus.c
     SCSIDiskReq *r = DO_UPCAST(SCSIDiskReq, req, req);
     SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, req->dev);
     uint64_t nb_sectors;
@@ -2273,6 +2276,19 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
     case FORMAT_UNIT:
         trace_scsi_disk_emulate_command_FORMAT_UNIT(r->req.cmd.xfer);
         break;
+    case SECURITY_PROTOCOL_IN:
+	switch(req->cmd.buf[1]) {
+	case SECURITY_PROTOCOL_INFORMATION:
+	    fprintf(stderr,"SCSI SEC PROT INFO INCOMING\n");
+	    exit(-1);
+	    break;
+	case SECURITY_PROTOCOL_SPDM:
+	    break;
+
+	}
+	break;
+    case SECURITY_PROTOCOL_OUT:
+	break;
     default:
         trace_scsi_disk_emulate_command_UNKNOWN(buf[0],
                                                 scsi_command_name(buf[0]));

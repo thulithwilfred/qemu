@@ -127,6 +127,7 @@
 #define WRITE_LONG_16         0x9f
 #define REPORT_LUNS           0xa0
 #define ATA_PASSTHROUGH_12    0xa1
+#define SECURITY_PROTOCOL_IN  0xa2
 #define MAINTENANCE_IN        0xa3
 #define MAINTENANCE_OUT       0xa4
 #define MOVE_MEDIUM           0xa5
@@ -142,6 +143,7 @@
 #define SEARCH_HIGH_12        0xb0
 #define SEARCH_EQUAL_12       0xb1
 #define SEARCH_LOW_12         0xb2
+#define SECURITY_PROTOCOL_OUT 0xb3
 #define READ_ELEMENT_STATUS   0xb8
 #define SEND_VOLUME_TAG       0xb6
 #define READ_DEFECT_DATA_12   0xb7
@@ -149,6 +151,12 @@
 #define MECHANISM_STATUS      0xbd
 #define READ_CD               0xbe
 #define SEND_DVD_STRUCTURE    0xbf
+
+/*
+ * SCSI Security Command Types
+ */
+#define SECURITY_PROTOCOL_INFORMATION	0x00
+#define SECURITY_PROTOCOL_SPDM			0xE8
 
 /*
  * SERVICE ACTION IN subcodes
