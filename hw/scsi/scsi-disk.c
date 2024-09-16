@@ -2024,6 +2024,9 @@ static void scsi_disk_emulate_write_data(SCSIRequest *req)
 
 static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
 {
+    // TODO:
+    //  Experiment adding sec prot here!
+    //  Move the sec in out to this fn from scsi-bus.c
     SCSIDiskReq *r = DO_UPCAST(SCSIDiskReq, req, req);
     SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, req->dev);
     uint64_t nb_sectors;

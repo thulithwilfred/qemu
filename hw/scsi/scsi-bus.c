@@ -1218,6 +1218,27 @@ static int scsi_req_xfer(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
             cmd->xfer = ata_passthrough_12_xfer(dev, buf);
         }
         break;
+    case SECURITY_PROTOCOL_IN:
+        /* Receive from device */
+        switch(buf[1]) {
+        case SECURITY_PROTOCOL_INFORMATION:
+            // TODO: PROT INF
+            while(1)
+            printf("WIP: SCSI SEC_IN: SEC_PROT_INFO\n");
+            break;
+        case SECURITY_PROTOCOL_SPDM:
+            // TODO: IF_RECV
+            break;
+        }
+        break;
+    case SECURITY_PROTOCOL_OUT:
+        /* Forward to device */
+        switch(buf[1]) {
+        case SECURITY_PROTOCOL_SPDM:
+            // TODO: IF_SEND
+            break;
+        }
+        break;
     case ATA_PASSTHROUGH_16:
         cmd->xfer = ata_passthrough_16_xfer(dev, buf);
         break;
