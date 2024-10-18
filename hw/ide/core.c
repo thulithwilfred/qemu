@@ -41,6 +41,7 @@
 #include "qemu/cutils.h"
 #include "system/replay.h"
 #include "system/runstate.h"
+#include "system/spdm-socket.h"
 #include "ide-internal.h"
 #include "trace.h"
 
@@ -152,7 +153,9 @@ static void ide_identify(IDEState *s)
 #if MAX_MULT_SECTORS > 1
     put_le16(p + 47, 0x8000 | MAX_MULT_SECTORS);
 #endif
-    put_le16(p + 48, 1); /* dword I/O */
+    if (dev && dev->spdm_port) {
+        put_le16(p + 48, (1 << 14) | 1); /* Trusted computing is supported */
+    }
     put_le16(p + 49, (1 << 11) | (1 << 9) | (1 << 8)); /* DMA and LBA supported */
     put_le16(p + 51, 0x200); /* PIO transfer cycle */
     put_le16(p + 52, 0x200); /* DMA transfer cycle */
@@ -1476,6 +1479,258 @@ static bool cmd_verify(IDEState *s, uint8_t cmd)
     return true;
 }
 
+static void ide_trusted_error(IDEState *s, uint8_t status, uint8_t error)
+{
+    s->status = status;
+    s->error = error;
+    ide_transfer_stop(s);
+    ide_bus_set_irq(s->bus);
+}
+
+static void security_spdm_to_server(IDEState *s)
+{
+    StorageSpdmTransportHeader hdr = {0};
+    uint32_t recvd;
+    uint32_t transfer_len = ((s->sector << 8) | (s->nsector & 0xff)) * 512;
+    uint32_t transport_len = transfer_len + sizeof(hdr);
+    uint16_t spdm_ata_rc = 0;
+    uint8_t secp = s->feature;
+    uint8_t spsp0 = s->lcyl;                            /* LBA 15:8 */
+    uint8_t spsp1 = s->hcyl;                            /* LBA 23:16 */
+    bool spdm_res;
+    uint8_t *sec_buf;
+
+    /* Generate the transport header */
+    hdr.security_protocol = secp;
+    hdr.security_protocol_specific = cpu_to_le16((spsp1 << 8) | spsp0);
+    hdr.inc_512 = false; /* Unsupported */
+    hdr.length = cpu_to_le32(transport_len);
+
+    sec_buf = g_malloc0(transport_len);
+    if (!sec_buf) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return;
+    }
+
+    memcpy(sec_buf, &hdr, sizeof(hdr));
+    memcpy(sec_buf + sizeof(hdr), s->io_buffer, transfer_len);
+
+    spdm_res = spdm_socket_send(s->spdm_socket, SPDM_SOCKET_STORAGE_CMD_IF_SEND,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA, sec_buf,
+                                transport_len);
+    if (!spdm_res) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        goto out;
+    }
+
+    /* The responder shall ack with message status */
+    recvd = spdm_socket_receive(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&spdm_ata_rc,
+                                SPDM_SOCKET_MAX_MSG_STATUS_LEN);
+    if (recvd < SPDM_SOCKET_MAX_MSG_STATUS_LEN) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        goto out;
+    }
+
+    spdm_ata_rc = cpu_to_be16(spdm_ata_rc);
+out:
+    g_free(sec_buf);
+    if (spdm_ata_rc != 0x5000) {
+        ide_trusted_error(s, spdm_ata_rc >> 8, spdm_ata_rc & 0xFF);
+    } else {
+        s->status = READY_STAT | SEEK_STAT;
+        ide_cmd_done(s);
+        ide_bus_set_irq(s->bus);
+    }
+}
+
+static bool security_spdm_send(IDEState *s, bool is_dma)
+{
+    uint32_t transfer_len = ((s->sector << 8) | (s->nsector & 0xff)) * 512;
+
+    if (transfer_len == 0 || transfer_len > s->io_buffer_total_len) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    /* Clear the io_buffer, into which we are copying a message from the host */
+    memset(s->io_buffer, 0, s->io_buffer_total_len);
+    if (is_dma) {
+        s->io_buffer_size = transfer_len;
+        s->io_buffer_index = 0;
+        if (!s->bus->dma->ops->rw_buf(s->bus->dma, false)) {
+            ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+            return true;
+        }
+        security_spdm_to_server(s);
+        s->status = READY_STAT | SEEK_STAT;
+        ide_bus_set_irq(s->bus);
+        return true;
+    }
+
+    ide_transfer_start(s, s->io_buffer, transfer_len, security_spdm_to_server);
+    return false;
+}
+
+static bool security_spdm_recv(IDEState *s, bool is_dma)
+{
+    StorageSpdmTransportHeader hdr = {0};
+    uint32_t recvd, spdm_res;
+    uint32_t allocation_len = ((s->sector << 8) | (s->nsector & 0xff)) * 512;
+    uint16_t spdm_ata_rc = 0;
+    uint8_t spsp0 = s->lcyl;                    /* LBA 15:8 */
+    uint8_t spsp1 = s->hcyl;                    /* LBA 23:16 */
+    uint8_t secp = s->feature;
+
+    if (allocation_len < 512 || allocation_len == 0) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    /* Generate the transport header */
+    hdr.security_protocol = secp;
+    hdr.security_protocol_specific = cpu_to_le16((spsp1 << 8) | spsp0);
+    hdr.inc_512 = false;
+    hdr.length = cpu_to_le32(allocation_len);
+
+    /* Forward if_recv to the SPDM Server with SPSP0 */
+    spdm_res = spdm_socket_send(s->spdm_socket, SPDM_SOCKET_STORAGE_CMD_IF_RECV,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&hdr, sizeof(hdr));
+    if (!spdm_res) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    /* The responder shall ack with message status */
+    recvd = spdm_socket_receive(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&spdm_ata_rc,
+                                SPDM_SOCKET_MAX_MSG_STATUS_LEN);
+    if (recvd < SPDM_SOCKET_MAX_MSG_STATUS_LEN) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    spdm_ata_rc = cpu_to_be16(spdm_ata_rc);
+    if (spdm_ata_rc != 0x5000) {
+        ide_trusted_error(s, spdm_ata_rc >> 8, spdm_ata_rc & 0xFF);
+        return true;
+    }
+
+    memset(s->io_buffer, 0, s->io_buffer_total_len);
+    recvd = spdm_socket_receive(s->spdm_socket,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                s->io_buffer, MIN(allocation_len,
+                                s->io_buffer_total_len));
+    if (!recvd) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    if (s->io_buffer_total_len - recvd < 512) {
+        /* We can't return a resposne in a 512B divisible block size*/
+
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    /* 512B chunk padded response */
+    recvd = (recvd + 511) & ~511;
+    if (allocation_len < recvd) {
+        /* Padded response exceeds response receive buffer size */
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    s->status = READY_STAT | SEEK_STAT;
+    if (is_dma) {
+        s->io_buffer_size = recvd;
+        s->io_buffer_index = 0;
+        if (!s->bus->dma->ops->rw_buf(s->bus->dma, true)) {
+            ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+            return true;
+        }
+        ide_bus_set_irq(s->bus);
+        return true;
+    }
+
+    ide_transfer_start(s, s->io_buffer, recvd, ide_transfer_stop);
+    ide_bus_set_irq(s->bus);
+    return false;
+}
+
+static bool security_get_prot_info(IDEState *s, bool is_dma)
+{
+
+    uint32_t receive_len = ((s->sector << 8) | (s->nsector & 0xff)) * 512;
+
+    if (receive_len < 512 || receive_len == 0) {
+        ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+        return true;
+    }
+
+    /* The response needs to be 0 padded to 512 bytes */
+    memset(s->io_buffer, 0, 0x200);
+    /* Support Security Protol List Length */
+    s->io_buffer[6] = 0; /* MSB */
+    s->io_buffer[7] = 2; /* LSB */
+    /* Support Security Protocol List */
+    s->io_buffer[8] = SFSC_SECURITY_PROT_INFO;
+    if (s->spdm_socket > 0) {
+        s->io_buffer[9] = IDE_SEC_PROT_DMTF_SPDM;
+    }
+
+    s->status = READY_STAT | SEEK_STAT;
+    if (is_dma) {
+        s->io_buffer_size = 0x200;
+        s->io_buffer_index = 0;
+        if (!s->bus->dma->ops->rw_buf(s->bus->dma, true)) {
+            ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+            return true;
+        }
+        ide_bus_set_irq(s->bus);
+        return true;
+    }
+
+    ide_transfer_start(s, s->io_buffer, 0x200, ide_transfer_stop);
+    ide_bus_set_irq(s->bus);
+    return false;
+}
+
+static bool cmd_trusted_recv(IDEState *s, uint8_t cmd)
+{
+    bool is_dma = cmd == TRUSTED_RECEIVE_DMA ? true : false;
+
+    switch (s->feature) {
+    case SFSC_SECURITY_PROT_INFO:
+        return security_get_prot_info(s, is_dma);
+    case IDE_SEC_PROT_DMTF_SPDM:
+        if (s->spdm_socket <= 0) {
+            goto abort;
+        }
+        return security_spdm_recv(s, is_dma);
+    }
+abort:
+    ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+    return true;
+}
+
+static bool cmd_trusted_send(IDEState *s, uint8_t cmd)
+{
+    bool is_dma = cmd == TRUSTED_SEND_DMA ? true : false;
+
+    switch (s->feature) {
+    case IDE_SEC_PROT_DMTF_SPDM:
+        if (s->spdm_socket <= 0) {
+            goto abort;
+        }
+        return security_spdm_send(s, is_dma);
+    }
+abort:
+    ide_trusted_error(s, READY_STAT | ERR_STAT, ABRT_ERR);
+    return true;
+}
+
 static bool cmd_set_multiple_mode(IDEState *s, uint8_t cmd)
 {
     if (s->drive_kind == IDE_CFATA && s->nsector == 0) {
@@ -2106,6 +2361,11 @@ static const struct {
     [WIN_VERIFY]                  = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_ONCE]             = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_EXT]              = { cmd_verify, HD_CFA_OK | SET_DSC },
+    [TRUSTED_NON_DATA]            = { cmd_nop, HD_CFA_OK },
+    [TRUSTED_RECEIVE]             = { cmd_trusted_recv, HD_CFA_OK },
+    [TRUSTED_RECEIVE_DMA]         = { cmd_trusted_recv, HD_CFA_OK },
+    [TRUSTED_SEND]                = { cmd_trusted_send, HD_CFA_OK },
+    [TRUSTED_SEND_DMA]            = { cmd_trusted_send, HD_CFA_OK },
     [WIN_SEEK]                    = { cmd_seek, HD_CFA_OK | SET_DSC },
     [CFA_TRANSLATE_SECTOR]        = { cmd_cfa_translate_sector, CFA_OK },
     [WIN_DIAGNOSE]                = { cmd_exec_dev_diagnostic, ALL_OK },
@@ -2664,6 +2924,13 @@ int ide_init_drive(IDEState *s, IDEDevice *dev, IDEDriveKind kind, Error **errp)
         pstrcpy(s->version, sizeof(s->version), qemu_hw_version());
     }
 
+    if (dev->spdm_port) {
+        s->spdm_socket = spdm_socket_connect(dev->spdm_port, errp);
+        if (s->spdm_socket < 0) {
+            return -1;
+        }
+    }
+
     ide_reset(s);
     blk_iostatus_enable(s->blk);
     return 0;
@@ -2816,6 +3083,9 @@ void ide_bus_set_irq(IDEBus *bus)
 
 void ide_exit(IDEState *s)
 {
+    if (s->spdm_socket > 0) {
+        spdm_socket_close(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA);
+    }
     timer_free(s->sector_write_timer);
     qemu_vfree(s->smart_selftest_data);
     qemu_vfree(s->io_buffer);

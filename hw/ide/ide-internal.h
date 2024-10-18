@@ -111,11 +111,11 @@
 /* reserved                             0x52..0x56 */
 /* WRITE LOG DMA EXT                    0x57 */
 /* reserved                             0x58..0x5A */
-/* TRUSTED NON DATA                     0x5B */
-/* TRUSTED RECEIVE                      0x5C */
-/* TRUSTED RECEIVE DMA                  0x5D */
-/* TRUSTED SEND                         0x5E */
-/* TRUSTED SEND DMA                     0x5F */
+#define TRUSTED_NON_DATA                0x5B
+#define TRUSTED_RECEIVE                 0x5C /* 28-Bit */
+#define TRUSTED_RECEIVE_DMA             0x5D /* 28-Bit */
+#define TRUSTED_SEND                    0x5E /* 28-Bit */
+#define TRUSTED_SEND_DMA                0x5F /* 28-Bit */
 /* READ FPDMA QUEUED                    0x60 */
 /* WRITE FPDMA QUEUED                   0x61 */
 /* reserved                             0x62->0x6F */
