@@ -41,6 +41,7 @@
 #include "qemu/cutils.h"
 #include "sysemu/replay.h"
 #include "sysemu/runstate.h"
+#include "sysemu/spdm-socket.h"
 #include "ide-internal.h"
 #include "trace.h"
 
@@ -152,7 +153,9 @@ static void ide_identify(IDEState *s)
 #if MAX_MULT_SECTORS > 1
     put_le16(p + 47, 0x8000 | MAX_MULT_SECTORS);
 #endif
-    put_le16(p + 48, 1); /* dword I/O */
+    if (dev && dev->spdm_port) {
+        put_le16(p + 48, (1 << 14) | 1); /* Trusted computing is supported */
+    }
     put_le16(p + 49, (1 << 11) | (1 << 9) | (1 << 8)); /* DMA and LBA supported */
     put_le16(p + 51, 0x200); /* PIO transfer cycle */
     put_le16(p + 52, 0x200); /* DMA transfer cycle */
@@ -1476,6 +1479,178 @@ static bool cmd_verify(IDEState *s, uint8_t cmd)
     return true;
 }
 
+static bool security_spdm_send(IDEState *s) {
+    StorageSpdmTransportHeader hdr = {0};
+    uint32_t recvd;
+    uint16_t spdm_ata_rc = 0;
+    uint8_t spsp0 = s->lcyl;                            /* LBA 15:8 */
+    uint8_t spsp1 = s->hcyl;                            /* LBA 23:16 */
+    uint32_t transport_transfer_len = s->sector * 512;  /* LBA 7:0 */
+    uint8_t secp = s->feature;
+    bool spdm_res;
+
+    //TODO: We need to set an error back to the host on failures!
+    if (transport_transfer_len == 0 || transport_transfer_len > s->io_buffer_total_len) {
+        printf("DEBUG_DELME: Bogus transfer length");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    transport_transfer_len += sizeof(hdr);
+    /* Generate the NVMe transport header */
+    hdr.security_protocol = secp;
+    hdr.security_protocol_specific = cpu_to_be16((spsp1 << 8) | spsp0);
+    hdr.inc_512 = false; /* Unsupported */
+    hdr.length = cpu_to_be32(transport_transfer_len);
+    spdm_res = spdm_socket_send(s->spdm_socket, SPDM_SOCKET_STORAGE_CMD_IF_SEND,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA, s->io_buffer,
+                                transport_transfer_len);
+    if (!spdm_res) {
+        printf("DEBUG_DELME: Socket send failure");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    /* The responder shall ack with message status */
+    recvd = spdm_socket_receive(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&spdm_ata_rc,
+                                SPDM_SOCKET_MAX_MSG_STATUS_LEN);
+    if (recvd < SPDM_SOCKET_MAX_MSG_STATUS_LEN) {
+        printf("DEBUG_DELME: Socket recv stat failure");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    // TODO: CHECK THIS FOR ERR
+    spdm_ata_rc = cpu_to_be16(spdm_ata_rc);
+
+    return true;
+}
+
+static bool security_spdm_recv(IDEState *s) {
+    StorageSpdmTransportHeader hdr = {0};
+    uint32_t recvd, spdm_res;
+    uint32_t allocation_len = s->sector * 512;  /* LBA 7:0 */
+    uint16_t spdm_ata_rc = 0;
+    uint8_t spsp0 = s->lcyl;                    /* LBA 15:8 */
+    uint8_t spsp1 = s->hcyl;                    /* LBA 23:16 */
+    uint8_t secp = s->feature;
+
+    if (allocation_len < 512 || allocation_len == 0 ) {
+        printf("DEBUG_DELME: Bogus receive len");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    /* Generate the NVMe transport header */
+    hdr.security_protocol = secp;
+    hdr.security_protocol_specific = (spsp1 << 8) | spsp0;
+    hdr.inc_512 = false;
+    hdr.length = allocation_len;
+    hdr.security_protocol_specific =
+        cpu_to_be16(hdr.security_protocol_specific);
+    hdr.length = cpu_to_be32(hdr.length);
+
+    /* Forward if_recv to the SPDM Server with SPSP0 */
+    spdm_res = spdm_socket_send(s->spdm_socket, SPDM_SOCKET_STORAGE_CMD_IF_RECV,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&hdr, sizeof(hdr));
+    if (!spdm_res) {
+        printf("DEBUG_DELME: Socket send failure in recv");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    /* The responder shall ack with message status */
+    recvd = spdm_socket_receive(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                (uint8_t *)&spdm_ata_rc,
+                                SPDM_SOCKET_MAX_MSG_STATUS_LEN);
+    if (recvd < SPDM_SOCKET_MAX_MSG_STATUS_LEN) {
+        printf("DEBUG_DELME: Socket recv stat failure");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+    // TODO: CHECK THIS FOR ERR
+    spdm_ata_rc = cpu_to_be16(spdm_ata_rc);
+
+    // IS OK ^ THEN
+    memset(s->io_buffer, 0, s->io_buffer_total_len);
+    recvd = spdm_socket_receive(s->spdm_socket,
+                                SPDM_SOCKET_TRANSPORT_TYPE_ATA,
+                                s->io_buffer, MIN(allocation_len, s->io_buffer_total_len));
+    if (!recvd) {
+        printf("DEBUG_DELME: Socket recv spdm msg failure");
+        exit(-1);
+        ide_abort_command(s);
+    }
+
+    ide_transfer_start(s, s->io_buffer, recvd, ide_transfer_stop);
+    ide_bus_set_irq(s->bus);
+    return false;
+}
+
+static bool security_get_prot_info(IDEState *s)
+{
+    uint32_t receive_len = s->sector * 512;  /* LBA 7:0 */
+
+    if (receive_len < 512 || receive_len == 0) {
+        printf("DEBUG_DELME: Bogus receive len");
+        exit(-1);
+        ide_abort_command(s);
+        return true;
+    }
+
+    /* The response needs to be 0 padded to 512 bytes */
+    memset(s->io_buffer, 0, 0x200);
+    /* Support Security Protol List Length */
+    s->io_buffer[6] = 0; /* MSB */
+    s->io_buffer[7] = 2; /* LSB */
+    /* Support Security Protocol List */
+    s->io_buffer[8] = SFSC_SECURITY_PROT_INFO;
+    s->io_buffer[9] = IDE_SEC_PROT_DMTF_SPDM;
+
+    ide_transfer_start(s, s->io_buffer, 0x200, ide_transfer_stop);
+    ide_bus_set_irq(s->bus);
+    return false;
+}
+
+/* TODO: This may need a DMA counter part for functional accuracy */
+static bool cmd_trusted_recv(IDEState *s, uint8_t cmd)
+{
+    switch (s->feature) {
+    case SFSC_SECURITY_PROT_INFO:
+        return security_get_prot_info(s);
+    case IDE_SEC_PROT_DMTF_SPDM:
+        if (s->spdm_socket <= 0) {
+            goto abort;
+        }
+        return security_spdm_recv(s);
+    }
+abort:
+    ide_abort_command(s);
+    return true;
+}
+
+static bool cmd_trusted_send(IDEState *s, uint8_t cmd)
+{
+    switch (s->feature) {
+    case IDE_SEC_PROT_DMTF_SPDM:
+        if (s->spdm_socket <= 0) {
+            goto abort;
+        }
+        return security_spdm_send(s);
+    }
+abort:
+    ide_abort_command(s);
+    return true;
+}
+
 static bool cmd_set_multiple_mode(IDEState *s, uint8_t cmd)
 {
     if (s->drive_kind == IDE_CFATA && s->nsector == 0) {
@@ -2106,6 +2281,11 @@ static const struct {
     [WIN_VERIFY]                  = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_ONCE]             = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_EXT]              = { cmd_verify, HD_CFA_OK | SET_DSC },
+    [TRUSTED_NON_DATA]            = { cmd_nop, HD_CFA_OK },
+    [TRUSTED_RECEIVE]             = { cmd_trusted_recv, HD_CFA_OK },
+    [TRUSTED_RECEIVE_DMA]         = { cmd_trusted_recv, HD_CFA_OK },
+    [TRUSTED_SEND]                = { cmd_trusted_send, HD_CFA_OK },
+    [TRUSTED_SEND_DMA]            = { cmd_trusted_send, HD_CFA_OK },
     [WIN_SEEK]                    = { cmd_seek, HD_CFA_OK | SET_DSC },
     [CFA_TRANSLATE_SECTOR]        = { cmd_cfa_translate_sector, CFA_OK },
     [WIN_DIAGNOSE]                = { cmd_exec_dev_diagnostic, ALL_OK },
@@ -2664,6 +2844,13 @@ int ide_init_drive(IDEState *s, IDEDevice *dev, IDEDriveKind kind, Error **errp)
         pstrcpy(s->version, sizeof(s->version), qemu_hw_version());
     }
 
+    if (dev->spdm_port) {
+        s->spdm_socket = spdm_socket_connect(dev->spdm_port, errp);
+        if (s->spdm_socket < 0) {
+            return -1;
+        }
+    }
+
     ide_reset(s);
     blk_iostatus_enable(s->blk);
     return 0;
@@ -2816,6 +3003,9 @@ void ide_bus_set_irq(IDEBus *bus)
 
 void ide_exit(IDEState *s)
 {
+    if (s->spdm_socket > 0) {
+        spdm_socket_close(s->spdm_socket, SPDM_SOCKET_TRANSPORT_TYPE_ATA);
+    }
     timer_free(s->sector_write_timer);
     qemu_vfree(s->smart_selftest_data);
     qemu_vfree(s->io_buffer);
