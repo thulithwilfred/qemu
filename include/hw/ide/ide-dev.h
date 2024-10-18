@@ -140,6 +140,9 @@ struct IDEState {
     uint8_t *smart_selftest_data;
     /* AHCI */
     int ncq_queues;
+    /* DMTF SPDM */
+    int spdm_socket;
+
 };
 
 struct IDEDeviceClass {
@@ -165,19 +168,29 @@ struct IDEDevice {
      */
     uint16_t rotation_rate;
     bool win2k_install_hack;
+    uint16_t spdm_port;
 };
 
 typedef struct IDEDrive {
     IDEDevice dev;
 } IDEDrive;
 
-#define DEFINE_IDE_DEV_PROPERTIES()                     \
-    DEFINE_BLOCK_PROPERTIES(IDEDrive, dev.conf),        \
-    DEFINE_BLOCK_ERROR_PROPERTIES(IDEDrive, dev.conf),  \
-    DEFINE_PROP_STRING("ver",  IDEDrive, dev.version),  \
-    DEFINE_PROP_UINT64("wwn",  IDEDrive, dev.wwn, 0),   \
-    DEFINE_PROP_STRING("serial",  IDEDrive, dev.serial),\
-    DEFINE_PROP_STRING("model", IDEDrive, dev.model)
+typedef enum SfscSecurityProtocol {
+    SFSC_SECURITY_PROT_INFO = 0x00,
+} SfscSecurityProtocol;
+
+typedef enum IDESecurityProtocols {
+    IDE_SEC_PROT_DMTF_SPDM    = 0xE8,
+} IDESecurityProtocols;
+
+#define DEFINE_IDE_DEV_PROPERTIES()                           \
+    DEFINE_BLOCK_PROPERTIES(IDEDrive, dev.conf),              \
+    DEFINE_BLOCK_ERROR_PROPERTIES(IDEDrive, dev.conf),        \
+    DEFINE_PROP_STRING("ver",  IDEDrive, dev.version),        \
+    DEFINE_PROP_UINT64("wwn",  IDEDrive, dev.wwn, 0),         \
+    DEFINE_PROP_STRING("serial",  IDEDrive, dev.serial),      \
+    DEFINE_PROP_STRING("model", IDEDrive, dev.model),         \
+    DEFINE_PROP_UINT16("spdm_port", IDEDrive, dev.spdm_port, 0)
 
 void ide_dev_initfn(IDEDevice *dev, IDEDriveKind kind, Error **errp);
 
