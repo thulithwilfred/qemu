@@ -186,9 +186,8 @@ static void ide_identify(IDEState *s)
         /* NCQ supported */
         put_le16(p + 76, (1 << 8));
     }
-
-    put_le16(p + 80, 0xf0); /* ata3 -> ata6 supported */
-    put_le16(p + 81, 0x16); /* conforms to ata5 */
+    put_le16(p + 80, 0x1F0); /* ata3 -> ata8-acs supported */
+    put_le16(p + 81, 0x52); /* conforms to ata8-acs version 3b */
     /* 14=NOP supported, 5=WCACHE supported, 0=SMART supported */
     put_le16(p + 82, (1 << 14) | (1 << 5) | 1);
     /* 13=flush_cache_ext,12=flush_cache,10=lba48 */
