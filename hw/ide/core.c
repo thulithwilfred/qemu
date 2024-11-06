@@ -186,7 +186,6 @@ static void ide_identify(IDEState *s)
         /* NCQ supported */
         put_le16(p + 76, (1 << 8));
     }
-    /* Lie to allow Kernel to do TRUSTED cmds */
     put_le16(p + 80, 0x1F0); /* ata3 -> ata6 supported */
     put_le16(p + 81, 0x16); /* conforms to ata5 */
     /* 14=NOP supported, 5=WCACHE supported, 0=SMART supported */
@@ -1479,6 +1478,161 @@ static bool cmd_verify(IDEState *s, uint8_t cmd)
     return true;
 }
 
+enum ATA_LOG_ADDR {
+    ATA_LOG_DIRECTORY = 0,
+    ATA_IDENTIFY_DEVICE = 0x30,
+};
+
+enum ATA_IDENT_DEV_PAGE {
+    ATA_IDENT_DEV_PAGE_LIST = 0,
+    ATA_IDENT_DEV_PAGE_IDENT = 1,
+    ATA_IDENT_DEV_PAGE_CAPACITY = 2,
+    ATA_IDENT_DEV_PAGE_SUP_CAP = 3,
+    ATA_IDENT_DEV_PAGE_CUR_SETTINGS = 4,
+    ATA_IDENT_DEV_PAGE_STRINGS = 5,
+    ATA_IDENT_DEV_PAGE_SECURITY = 6,
+    ATA_IDENT_DEV_PAGE_SATA = 8,
+};
+
+static bool log_identify_device_data(IDEState *s, uint8_t page_num)
+{
+    memset(s->io_buffer, 0, s->io_buffer_total_len);
+    switch (page_num) {
+    case ATA_IDENT_DEV_PAGE_LIST:
+        /* Identify Device: Info Header */
+        s->io_buffer[0] = 1; /* Revision Number */
+        /* Identify Device: Number of entries in list */
+        s->io_buffer[8] = 8;
+        /* Identify Device: Supported log pages numbers */
+        s->io_buffer[9] = 0;
+        s->io_buffer[10] = 1;
+        s->io_buffer[11] = 2;
+        s->io_buffer[12] = 3;
+        s->io_buffer[13] = 4;
+        s->io_buffer[14] = 5;
+        s->io_buffer[15] = 6;
+        s->io_buffer[16] = 8;
+        return true;
+    case ATA_IDENT_DEV_PAGE_IDENT:
+        /* Copy of Identify Device */
+        ide_identify(s);
+        return true;
+    case ATA_IDENT_DEV_PAGE_CAPACITY:
+        /* Capacity Page: Info Header */
+        s->io_buffer[0] = 1; /* Revision Number */
+        s->io_buffer[2] = 2; /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* Capacity Page: Device Capacity */
+        put_le16((uint16_t *)(s->io_buffer + 8), s->nb_sectors);
+        put_le16((uint16_t *)(s->io_buffer + 10), s->nb_sectors >> 16);
+        put_le16((uint16_t *)(s->io_buffer + 12), s->nb_sectors >> 32);
+        put_le16((uint16_t *)(s->io_buffer + 14), s->nb_sectors >> 48);
+        s->io_buffer[15] = 1 << 7;
+        /* Capacity Page: Nominal Buffer Size */
+        put_le16((uint16_t *)(s->io_buffer + 32), s->io_buffer_total_len);
+        put_le16((uint16_t *)(s->io_buffer + 34), s->io_buffer_total_len >> 16);
+        s->io_buffer[39] = 1 << 7;
+        return true;
+    case ATA_IDENT_DEV_PAGE_SUP_CAP:
+        return false;
+    case ATA_IDENT_DEV_PAGE_CUR_SETTINGS:
+        return false;
+    case ATA_IDENT_DEV_PAGE_STRINGS:
+        /* Strings Page: Info Header */
+        s->io_buffer[0] = 1; /* Revision Number */
+        s->io_buffer[2] = 5; /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* Device Information */
+        padstr((char *)(s->io_buffer + 8), s->drive_serial_str, 20); /* serial number */
+        padstr((char *)(s->io_buffer + 32), s->version, 8); /* firmware version */
+        padstr((char *)(s->io_buffer + 48), s->drive_model_str, 40); /* model */
+        return false;
+    case ATA_IDENT_DEV_PAGE_SECURITY:
+        /* Security Page: Info Header */
+        s->io_buffer[0] = 1;        /* Revision Number */
+        s->io_buffer[2] = 6;        /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* Security Page: Trusted Computing Feature Set */
+        s->io_buffer[40] = 1;       /* Trusted Computing Support */
+        s->io_buffer[47] = 1 << 7;
+        return true;
+    case ATA_IDENT_DEV_PAGE_SATA:
+        return false;
+    default:
+        return false;
+    }
+}
+
+static void fill_log_directory(IDEState *s)
+{
+    if (s->smart_enabled) {
+        memset(s->io_buffer, 0, 0x200);
+        /* General Purpose Logging Version */
+        s->io_buffer[0] = 0x1;
+        /* Identify device data: 8 Mandatory Pages */
+        s->io_buffer[0x30 * 2] = 0x8;
+    } else {
+        memset(s->io_buffer, 0, 0xFF);
+        /* General Purpose Logging Version */
+        s->io_buffer[0] = 0x1;
+        /* Identify device data: 8 Mandatory Pages */
+        s->io_buffer[0x30] = 0x8;
+    }
+}
+
+static bool cmd_read_log(IDEState *s, uint8_t cmd)
+{
+    uint64_t log_page_bytes;
+    uint16_t page_num;
+    bool is_dma = cmd == READ_LOG_DMA_EXT ? true : false;
+    uint8_t log_page_cnt;
+    uint8_t log_addr;
+
+    ide_cmd_lba48_transform(s, true);
+    log_page_cnt = s->nsector & 0xff;
+    log_page_bytes = log_page_cnt * 512;
+    page_num = (s->hob_lcyl << 8) | (s->lcyl);
+    log_addr = s->sector;
+
+    if (log_page_bytes == 0 || log_page_bytes >= s->io_buffer_total_len) {
+        ide_abort_command(s);
+        return true;
+    }
+
+    switch (log_addr) {
+    case ATA_LOG_DIRECTORY:
+        /* Log directory */
+        memset(s->io_buffer, 0, log_page_bytes);
+        fill_log_directory(s);
+        break;
+    case ATA_IDENTIFY_DEVICE:
+        /* Identify Device Data */
+        if (!log_identify_device_data(s, page_num)) {
+            ide_abort_command(s);
+            return true;
+        }
+        break;
+    default:
+        ide_abort_command(s);
+        return true;
+    }
+
+    /* Transfer to host */
+    s->status = READY_STAT | SEEK_STAT;
+    if (is_dma) {
+        s->io_buffer_size = log_page_bytes;
+        s->io_buffer_index = 0;
+        if (!s->bus->dma->ops->rw_buf(s->bus->dma, false)) {
+            ide_abort_command(s);
+            return true;
+        }
+    } else {
+        ide_transfer_start(s, s->io_buffer, log_page_bytes, ide_transfer_stop);
+    }
+    ide_bus_set_irq(s->bus);
+    return true;
+}
+
 static void ide_trusted_error(IDEState *s, uint8_t status, uint8_t error)
 {
     s->status = status;
@@ -2351,6 +2505,7 @@ static const struct {
     [WIN_READDMA_EXT]             = { cmd_read_dma, HD_CFA_OK },
     [WIN_READ_NATIVE_MAX_EXT]     = { cmd_read_native_max, HD_CFA_OK | SET_DSC },
     [WIN_MULTREAD_EXT]            = { cmd_read_multiple, HD_CFA_OK },
+    [READ_LOG_EXT]                = { cmd_read_log, HD_CFA_OK },
     [WIN_WRITE]                   = { cmd_write_pio, HD_CFA_OK },
     [WIN_WRITE_ONCE]              = { cmd_write_pio, HD_CFA_OK },
     [WIN_WRITE_EXT]               = { cmd_write_pio, HD_CFA_OK },
@@ -2361,6 +2516,7 @@ static const struct {
     [WIN_VERIFY]                  = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_ONCE]             = { cmd_verify, HD_CFA_OK | SET_DSC },
     [WIN_VERIFY_EXT]              = { cmd_verify, HD_CFA_OK | SET_DSC },
+    [READ_LOG_DMA_EXT]            = { cmd_read_log, HD_CFA_OK },
     [TRUSTED_NON_DATA]            = { cmd_nop, HD_CFA_OK },
     [TRUSTED_RECEIVE]             = { cmd_trusted_recv, HD_CFA_OK },
     [TRUSTED_RECEIVE_DMA]         = { cmd_trusted_recv, HD_CFA_OK },
