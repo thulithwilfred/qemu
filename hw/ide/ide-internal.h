@@ -81,7 +81,7 @@
 /* READ STREAM DMA EXT                  0x2A */
 /* READ STREAM EXT                      0x2B */
 /* reserved                             0x2C..0x2E */
-/* READ LOG EXT                         0x2F */
+#define READ_LOG_EXT                    0x2F
 #define WIN_WRITE                       0x30 /* 28-Bit */
 #define WIN_WRITE_ONCE                  0x31 /* 28-Bit w/o retries, obsolete since ATA5 */
 /* obsolete since ATA4                  0x32..0x33 */
@@ -104,7 +104,7 @@
 /* reserved                             0x43..0x44 */
 /* WRITE UNCORRECTABLE EXT              0x45 */
 /* reserved                             0x46 */
-/* READ LOG DMA EXT                     0x47 */
+#define READ_LOG_DMA_EXT                0x47
 /* reserved                             0x48..0x4F */
 /* obsolete since ATA4                  0x50 */
 /* CONFIGURE STREAM                     0x51 */
