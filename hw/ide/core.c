@@ -1496,6 +1496,8 @@ enum ATA_IDENT_DEV_PAGE {
 
 static bool log_identify_device_data(IDEState *s, uint8_t page_num)
 {
+    IDEDevice *dev = s->unit ? s->bus->slave : s->bus->master;
+
     memset(s->io_buffer, 0, s->io_buffer_total_len);
     switch (page_num) {
     case ATA_IDENT_DEV_PAGE_LIST:
@@ -1534,9 +1536,53 @@ static bool log_identify_device_data(IDEState *s, uint8_t page_num)
         s->io_buffer[39] = 1 << 7;
         return true;
     case ATA_IDENT_DEV_PAGE_SUP_CAP:
-        return false;
+        /* Supported Capabilities: Info Header */
+        s->io_buffer[0] = 1; /* Revision Number */
+        s->io_buffer[2] = 3; /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* Supported Capabilities */
+        s->io_buffer[15] = 1 << 7;
+        if (dev && dev->conf.discard_granularity) {
+            s->io_buffer[12] = (1 << 7) | 1; /* DRAT Support + NOP */
+        } else {
+            s->io_buffer[12] = 1; /* NOP support */
+        }
+        s->io_buffer[11] = 1; /* Volatile Write Cache */
+        /* SMART + Flush Cache + LBA48 */
+        s->io_buffer[10] = (1 << 7) || (1 << 6) || (1 << 4);
+        /* Nominal Media Rotation Rate */
+        s->io_buffer[31] = 1 << 7;
+        if (dev) {
+            /* Nominal media rotation rate */
+            put_le16((uint16_t *)(s->io_buffer + 24), dev->rotation_rate);
+        }
+        /* World Wide Name */
+        s->io_buffer[71] = 1 << 7;
+        if (s->wwn) {
+            /* LE 16-bit words 111-108 contain 64-bit World Wide Name */
+            put_le16((uint16_t *)(s->io_buffer + 56), s->wwn >> 48);
+            put_le16((uint16_t *)(s->io_buffer + 58), s->wwn >> 32);
+            put_le16((uint16_t *)(s->io_buffer + 60), s->wwn >> 16);
+            put_le16((uint16_t *)(s->io_buffer + 62), s->wwn);
+        }
+        /* Data Set Management */
+        s->io_buffer[79] = 1 << 7;
+        if (dev && dev->conf.discard_granularity) {
+            s->io_buffer[72] = 1; /* TRIM support */
+        }
+        return true;
     case ATA_IDENT_DEV_PAGE_CUR_SETTINGS:
-        return false;
+        /* Current Settings: Info Header */
+        s->io_buffer[0] = 1; /* Revision Number */
+        s->io_buffer[2] = 4; /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* Current Settings */
+        s->io_buffer[15] = 1 << 7;
+        if (blk_enable_write_cache(s->blk)) {
+            s->io_buffer[9] = 1 << 5; /* Volatile Write Cache */
+        }
+        s->io_buffer[8] = 1 << 6; /* SMART */
+        return true;
     case ATA_IDENT_DEV_PAGE_STRINGS:
         /* Strings Page: Info Header */
         s->io_buffer[0] = 1; /* Revision Number */
@@ -1560,7 +1606,16 @@ static bool log_identify_device_data(IDEState *s, uint8_t page_num)
         s->io_buffer[47] = 1 << 7;
         return true;
     case ATA_IDENT_DEV_PAGE_SATA:
-        return false;
+        /* Serial ATA: Info Header */
+        s->io_buffer[0] = 1;        /* Revision Number */
+        s->io_buffer[2] = 8;        /* Page Number */
+        s->io_buffer[7] = 1 << 7;
+        /* SATA Capabilities */
+        s->io_buffer[15] = 1 << 7;
+        s->io_buffer[8] = 1 << 7; /* NCQ Supported */
+        /* Current SATA Settings */
+        s->io_buffer[23] = 1 << 7;
+        return true;
     default:
         return false;
     }
